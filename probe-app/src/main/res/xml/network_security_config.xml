@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  loopback 明文放行：Android 9+ 默认禁明文；probe MainActivity 经 HttpURLConnection
+  访问自身 127.0.0.1:PORT 的 /facts、/host 回程，必须显式放行（镜像 samples/minimal-app
+  与规划 §6.3 的消费方口径）。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

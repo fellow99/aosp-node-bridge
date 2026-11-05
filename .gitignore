@@ -43,3 +43,6 @@ runtime-build/
 
 # 本地真机证据（由 tools/collect-evidence.sh 产出）
 docs/evidence/
+
+# 探针测试报告留档（不入库）
+logs/

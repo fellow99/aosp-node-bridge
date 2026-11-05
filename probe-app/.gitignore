@@ -1,0 +1,6 @@
+# Gradle 产物与本地配置不入库（对齐 samples/minimal-app 与 aosp-node-cli/probe-app 口径）
+build/
+local.properties
+app/libs/
+.gradle/
+*.apk

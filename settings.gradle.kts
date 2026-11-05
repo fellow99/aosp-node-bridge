@@ -32,3 +32,4 @@ rootProject.name = "aosp-node-bridge"
 
 include(":node-bridge")
 include(":samples:minimal-app")
+include(":probe-app")
