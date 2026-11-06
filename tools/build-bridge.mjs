@@ -7,7 +7,7 @@
  *   需要 CMake 的场合用 node-bridge/src/main/cpp/CMakeLists.txt（等价语义）。
  *
  * 用法：
- *   node tools/build-bridge.mjs --out <dir> [--abi arm64-v8a] [--api 24] [--force]
+ *   node tools/build-bridge.mjs --out <dir> [--abi arm64-v8a] [--api 24] [--force] [--libnode <libnode.so|dir>] [--node-headers <dir>]
  *
  * 退出码：0 成功（或可跳过的缺件）· 1 硬失败
  */
@@ -30,6 +30,8 @@ const ABI = argOf('--abi', 'arm64-v8a');
 const API = argOf('--api', '24');
 
 const ABI_TRIPLE = { 'arm64-v8a': 'aarch64-linux-android', 'armeabi-v7a': 'armv7a-linux-androideabi' };
+
+const LIBNODE = argOf('--libnode', null);
 
 function log(msg) {
   process.stdout.write(`[build-bridge] ${msg}\n`);
@@ -81,6 +83,41 @@ function run(cmd, cmdArgs) {
   }
 }
 
+
+// 定位 libnode.so（addon 的链接输入，用于留下 DT_NEEDED libnode.so）：
+//   优先级：--libnode <libnode.so|dir> 显式指定 → 自动探测 gradle 缓存 node-runtime AAR。
+function findLibnode() {
+  if (LIBNODE) {
+    const p = path.resolve(LIBNODE);
+    if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+      const f = path.join(p, 'libnode.so');
+      return fs.existsSync(f) ? f : null;
+    }
+    return fs.existsSync(p) ? p : null;
+  }
+  const cacheRoot = path.join(os.homedir(), '.gradle', 'caches', 'modules-2', 'files-2.1', 'io.github.fellow99', 'node-runtime');
+  if (!fs.existsSync(cacheRoot)) return null;
+  // 版本从高到低尝试（多版本缓存时优先新版）
+  for (const ver of fs.readdirSync(cacheRoot).sort().reverse()) {
+    const verDir = path.join(cacheRoot, ver);
+    if (!fs.statSync(verDir).isDirectory()) continue;
+    for (const hash of fs.readdirSync(verDir)) {
+      const hashDir = path.join(verDir, hash);
+      const aar = fs.readdirSync(hashDir).find((f) => f.startsWith('node-runtime-') && f.endsWith('.aar'));
+      if (!aar) continue;
+      const outDir = path.join(os.tmpdir(), `build-bridge-libnode-${ver}-${hash}`);
+      fs.mkdirSync(outDir, { recursive: true });
+      const target = path.join(outDir, 'libnode.so');
+      if (fs.existsSync(target)) return target;
+      const r = spawnSync('unzip', ['-o', '-j', path.join(hashDir, aar), 'jni/arm64-v8a/libnode.so', '-d', outDir], { encoding: 'utf8' });
+      if (r.status === 0 && fs.existsSync(target)) {
+        log(`libnode.so（node-runtime ${ver}）→ ${target}`);
+        return target;
+      }
+    }
+  }
+  return null;
+}
 function main() {
   const ndk = findNdk();
   if (!ndk) {
@@ -110,27 +147,52 @@ function main() {
   ]);
   log(`✔ ${bridge} (${fs.statSync(bridge).size} B)`);
 
-  // ② NAPI addon（头文件随仓库自带；napi_* 留作未定义符号，运行期由 dlopen 的 libnode.so 解析）
-  const includeDir = path.join(ROOT, 'node-bridge/src/main/cpp/include/node');
-  const haveHeaders = fs.existsSync(path.join(includeDir, 'node_api.h'));
-
-  if (!haveHeaders) {
-    log(`跳过 node_host_client：缺 Node NAPI 头(${includeDir})`);
-    return;
+  // ② NAPI addon。头文件优先取显式 --node-headers（或仓库自带目录，若存在）；次选兄弟仓
+  //    aosp-node-runtime 的 include（历史构建即来于此，见 docs/002-真机验证记录.md 行 4）。
+  //    链接期导入 libnode.so，使 addon 留下 DT_NEEDED libnode.so：运行期 linker 按依赖图
+  //    解析 napi_*（CMakeLists.txt 的设计注释；002 验证记录亦要求 addon DT_NEEDED 含 libnode.so）。
+  //    --no-as-needed 防止链接器因「addon 未直接引用 libnode 自身符号」而丢弃该依赖记录。
+  let includeDir = null;
+  const nodeHeadersArg = argOf('--node-headers', null);
+  for (const cand of [
+    nodeHeadersArg,
+    path.join(ROOT, 'node-bridge/src/main/cpp/include/node'),
+    path.join(ROOT, '..', 'aosp-node-runtime', 'node-runtime', 'include', 'node'),
+  ]) {
+    if (cand && fs.existsSync(path.join(cand, 'node_api.h'))) {
+      includeDir = path.resolve(cand);
+      break;
+    }
   }
 
+  if (!includeDir) {
+    log('跳过 node_host_client：未找到 Node NAPI 头（node_api.h）');
+    log('修法：node tools/build-bridge.mjs --node-headers <dir>（指向含 node_api.h 的目录，如 aosp-node-runtime/node-runtime/include/node）');
+    return;
+  }
+  log(`NAPI 头 = ${includeDir}`);
+
+  const libnode = findLibnode();
+  if (!libnode) {
+    log('跳过 node_host_client：未找到 libnode.so（addon 需显式依赖 libnode.so，产物才会带 DT_NEEDED）');
+    log('修法：node tools/build-bridge.mjs --libnode <libnode.so|dir>（可先 gradle 依赖 node-runtime 让 AAR 进缓存）');
+    return;
+  }
+  log(`addon 链接输入 libnode.so = ${libnode}`);
   const client = path.join(OUT, 'libnode_host_client.so');
   run(clang, [
     '-shared', '-fPIC', '-O2', '-Wall', '-fvisibility=hidden',
     `-I${includeDir}`,
     '-Wl,-soname,libnode_host_client.so',
     '-Wl,-z,undefs',
+    '-Wl,--no-as-needed',
     '-o', client,
     path.join(ROOT, 'node-bridge/src/main/cpp/node_host_client.c'),
+    '-L', path.dirname(libnode),
+    '-l:libnode.so',
     '-llog',
   ]);
   log(`✔ ${client} (${fs.statSync(client).size} B)`);
-  log('提示：napi_* 符号留作未定义（-z undefs），运行期由已 dlopen 的 libnode.so（RTLD_GLOBAL）解析');
 }
 
 try {

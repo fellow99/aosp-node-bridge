@@ -45,7 +45,12 @@ android {
 
     packaging {
         jniLibs {
-            useLegacyPackaging = false
+            // 与生产消费方 pi-desktop-android 同形态：.so 物理落盘 nativeLibraryDir（legacy=true）。
+            // 20261106 UAT 排障曾怀疑打包形态是 PRB-04a/04b（addon napi 符号解析失败）根因并做 A/B，
+            // 证伪：legacy=false/true 下均复现。真实根因/修复 = addon 显式链接 libnode.so 留下
+            // DT_NEEDED（见 tools/build-bridge.mjs），与打包形态无关。此处保留 legacy=true 仅因
+            // 对齐生产打包方式，属可选项。
+            useLegacyPackaging = true
         }
     }
 }

@@ -116,7 +116,7 @@ node tools/smoke-host.mjs
 gradle :samples:minimal-app:assembleModernDebug
 ```
 
-The bundled NAPI headers (`node-bridge/src/main/cpp/include/node/`) are the stable N-API surface and rarely change across Node majors. `libnode.so` itself is never needed at bridge build time.
+NAPI headers are provided via `--node-headers <dir>` (falls back to the sibling `aosp-node-runtime` checkout; the stable N-API surface rarely changes across Node majors). The addon is linked against `libnode.so` (auto-resolved from the `node-runtime` AAR in the Gradle cache, or via `--libnode <path>`) so it keeps a `DT_NEEDED libnode.so` entry — required for the runtime linker to resolve the `napi_*` symbols on older Android (API 26 verified; see docs/20261106-安卓探针-测试报告.md §二.3 and 2026UAT notes).
 
 ## Constraints (reported, never silently degraded)
 

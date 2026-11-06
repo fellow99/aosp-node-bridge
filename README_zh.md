@@ -116,7 +116,7 @@ node tools/smoke-host.mjs
 gradle :samples:minimal-app:assembleModernDebug
 ```
 
-自带的 NAPI 头文件（`node-bridge/src/main/cpp/include/node/`）是稳定的 N-API 表面，跨 Node 大版本极少变动。bridge 编译期完全不需要 `libnode.so`。
+NAPI 头文件经 `--node-headers <dir>` 提供（缺省回落到兄弟仓 `aosp-node-runtime` 检出；N-API 表面稳定、跨大版本极少变动）。addon 链接时**显式链接 `libnode.so`**（自动从 gradle 缓存中的 `node-runtime` AAR 解析，或 `--libnode <path>` 指定），使产物保留 `DT_NEEDED libnode.so`——这是老 Android（API 26 已实测）运行期 linker 解析 addon `napi_*` 符号的前提（见 docs/20261106-安卓探针-测试报告.md §二.3 与 20261106 UAT 修复记录）。
 
 ## 已知约束（都会如实上报，不静默降级）
 
